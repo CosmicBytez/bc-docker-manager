@@ -2,11 +2,11 @@
 
 ## BC Docker Manager
 
-Desktop application (Electron 35 + Next.js 16) for managing Business Central Docker containers. Native Windows app for container management, log viewing, backup operations, AI-powered troubleshooting, and one-click container deployment. Standalone repo: `azullus/bc-docker-manager`.
+Desktop application (Electron 41 + Next.js 16) for managing Business Central Docker containers. Native Windows app for container management, log viewing, backup operations, AI-powered troubleshooting, and one-click container deployment. Standalone repo: `CosmicBytez/bc-docker-manager`.
 
 ## Stack
 
-- **Desktop shell**: Electron 35 (main + preload + IPC handlers)
+- **Desktop shell**: Electron 41 (main + preload + IPC handlers)
 - **Frontend**: Next.js 16 (App Router, static export), React 19, TypeScript
 - **Styling**: Tailwind CSS with custom theme
 - **AI**: `@anthropic-ai/sdk` called directly from the Electron main process via IPC (renderer never sees the key)
