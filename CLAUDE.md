@@ -34,11 +34,12 @@ Desktop application (Electron 41 + Next.js 16) for managing Business Central Doc
 | `electron/preload.js` | Secure IPC bridge |
 | `electron/ipc-handlers.js` | All backend operations (Docker, backups, AI) |
 | `lib/electron-api.ts` | Unified API for web/Electron |
-| `lib/docker-api.ts` | Docker Engine API wrapper (web mode) |
+| `lib/env.ts` | Web/Electron env detection — Docker ops run via `dockerode` in `electron/ipc-handlers.js` (there is no `lib/docker-api.ts`) |
 | `lib/types.ts` | TypeScript interfaces |
 | `app/create/page.tsx` | Container creation wizard |
 | `app/settings/page.tsx` | App configuration |
 | `lib/hns-error-detector.ts` | HNS error pattern detection |
+| `electron/rag-helper.js` | RAG over BC/Docker HOWTO `.md` docs (AI context + offline fallback); honors `BC_HOWTO_PATH`, else probes AZU-VAULT `HOWTO's/CONTAINERS` |
 | `middleware.ts` | CSRF protection |
 
 ## Development Commands
@@ -145,8 +146,8 @@ Available settings:
    ```
 
 3. **Output**:
-   - Installer: `dist/BC Container Manager-Setup-1.0.0.exe`
-   - Portable: `dist/BC Container Manager-Portable-1.0.0.exe`
+   - Installer: `dist/BC Container Manager-Setup-${version}.exe`
+   - Portable: `dist/BC Container Manager-Portable-${version}.exe`
 
 ## Project Structure
 
@@ -158,13 +159,15 @@ BC-Docker-Manager/
 │   └── ipc-handlers.js   # IPC handlers
 ├── app/
 │   ├── create/           # Container creation wizard
+│   ├── setup/            # First-run setup flow
 │   ├── settings/         # App settings
 │   ├── dashboard/        # Container list
+│   ├── container/        # Per-container detail view
 │   ├── backups/          # Backup management
 │   └── troubleshoot/     # AI chat
 ├── lib/
 │   ├── electron-api.ts   # Unified API layer
-│   ├── docker-api.ts     # Docker operations (web)
+│   ├── env.ts            # Web/Electron env detection (Docker ops via dockerode in electron/)
 │   └── types.ts          # TypeScript types
 ├── scripts/
 │   ├── Install-BC-Helper.ps1   # Primary deployment script (uses BcContainerHelper)
@@ -234,10 +237,11 @@ App settings (stored in `settings.json`, not env):
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/`):
+GitHub Actions (7 workflows in `.github/workflows/`):
 - `build-test.yml` — Windows runner, Node 20, type-check, tests, electron:pack
 - `ci.yml` — Lint and build checks
 - `release.yml` — Release automation
+- `auto-fix.yml`, `claude.yml`, `claude-code-review.yml`, `scheduled-checks.yml` — Claude automation + scheduled checks
 
 ## Before Committing
 
