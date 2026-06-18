@@ -39,6 +39,7 @@ Desktop application (Electron 41 + Next.js 16) for managing Business Central Doc
 | `app/create/page.tsx` | Container creation wizard |
 | `app/settings/page.tsx` | App configuration |
 | `lib/hns-error-detector.ts` | HNS error pattern detection |
+| `lib/deployment-context.tsx` | React Context provider for deployment state (status, output, container name) shared across the creation wizard |
 | `electron/rag-helper.js` | RAG over BC/Docker HOWTO `.md` docs (AI context + offline fallback); honors `BC_HOWTO_PATH`, else probes AZU-VAULT `HOWTO's/CONTAINERS` |
 | `middleware.ts` | CSRF protection |
 
@@ -46,15 +47,16 @@ Desktop application (Electron 41 + Next.js 16) for managing Business Central Doc
 
 ```bash
 # Web development (Next.js only)
-npm run dev           # Start dev server (port 3000)
+npm run dev           # Start Next.js dev server on port 3000 (web/browser mode only, no Electron)
 
 # Electron development
-npm run electron:dev  # Start Next.js + Electron together
+npm run electron:dev  # Start Next.js on port 3333 + launch Electron together
 
 # Building
 npm run build         # Build Next.js static export
 npm run electron:build:win     # Build Windows installer
 npm run electron:build:portable # Build portable .exe
+npm run electron:pack  # Build unpacked dir (used by CI, no installer)
 
 # Testing
 npm run test          # Run Jest tests
@@ -146,8 +148,8 @@ Available settings:
    ```
 
 3. **Output**:
-   - Installer: `dist/BC Container Manager-Setup-${version}.exe`
-   - Portable: `dist/BC Container Manager-Portable-${version}.exe`
+   - Installer: `dist7/BC Container Manager-Setup-${version}.exe`
+   - Portable: `dist7/BC Container Manager-Portable-${version}.exe`
 
 ## Project Structure
 
