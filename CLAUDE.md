@@ -53,7 +53,8 @@ npm run dev           # Start Next.js dev server on port 3000 (web/browser mode 
 npm run electron:dev  # Start Next.js on port 3333 + launch Electron together
 
 # Building
-npm run build         # Build Next.js static export
+npm run build         # Web-mode build (dynamic API routes) — NOT the static export
+npm run build:electron # Static export for Electron (ELECTRON_BUILD=1 gates output:'export' in next.config.js)
 npm run electron:build:win     # Build Windows installer
 npm run electron:build:portable # Build portable .exe
 npm run electron:pack  # Build unpacked dir (used by CI, no installer)
@@ -240,7 +241,7 @@ App settings (stored in `settings.json`, not env):
 ## CI/CD
 
 GitHub Actions (7 workflows in `.github/workflows/`):
-- `build-test.yml` — Windows runner, Node 20, type-check, tests, electron:pack
+- `build-test.yml` — Windows runner, Node 22, type-check, tests, electron:pack
 - `ci.yml` — Lint and build checks
 - `release.yml` — Release automation
 - `auto-fix.yml`, `claude.yml`, `claude-code-review.yml`, `scheduled-checks.yml` — Claude automation + scheduled checks
