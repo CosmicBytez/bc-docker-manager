@@ -1,3 +1,6 @@
+# Grouped updates (2026-07-21): minor+patch land as one weekly PR per ecosystem;
+# majors are held (ignore rule) and surface only via Dependabot alerts.
+# github-actions is exempt from the major hold — action tags move by major.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -5,10 +8,19 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     target-branch: "main"
     labels:
       - "dependencies"
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -19,3 +31,8 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
