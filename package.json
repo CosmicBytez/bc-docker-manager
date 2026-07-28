@@ -45,7 +45,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "electron": "^41.1.1",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.39.3",
     "eslint-config-next": "^16.1.6",
     "jest": "^30.3.0",
