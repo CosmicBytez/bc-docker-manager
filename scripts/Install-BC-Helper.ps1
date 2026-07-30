@@ -115,7 +115,12 @@ param(
     # Container isolation mode (process is recommended on Windows 11 when OS versions match)
     [Parameter(Mandatory=$false)]
     [ValidateSet('process','hyperv')]
-    [string]$Isolation = 'process'
+    [string]$Isolation = 'process',
+
+    # Install the BcContainerHelper module and exit without deploying a container.
+    # Used by the app's Setup page for first-run onboarding.
+    [Parameter(Mandatory=$false)]
+    [switch]$InstallModuleOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -148,6 +153,26 @@ function Write-Log {
     Write-Host "[$timestamp] [$Level] $Message" -ForegroundColor $color
 }
 
+function Install-BcContainerHelperModule {
+    # Check BcContainerHelper module
+    $bcModule = Get-Module -ListAvailable -Name BcContainerHelper | Select-Object -First 1
+    if (-not $bcModule) {
+        Write-Log "BcContainerHelper module not found. Installing..." -Level WARN
+        try {
+            Install-Module BcContainerHelper -Force -Scope AllUsers
+            Import-Module BcContainerHelper -Force
+            Write-Log "BcContainerHelper installed successfully" -Level SUCCESS
+        }
+        catch {
+            throw "Failed to install BcContainerHelper module: $($_.Exception.Message)"
+        }
+    }
+    else {
+        Import-Module BcContainerHelper -Force
+        Write-Log "BcContainerHelper: v$($bcModule.Version)" -Level SUCCESS
+    }
+}
+
 function Test-Prerequisites {
     Write-Log "Checking prerequisites..."
 
@@ -170,23 +195,7 @@ function Test-Prerequisites {
         throw "Docker is not installed or not running. Please install Docker Engine first."
     }
 
-    # Check BcContainerHelper module
-    $bcModule = Get-Module -ListAvailable -Name BcContainerHelper | Select-Object -First 1
-    if (-not $bcModule) {
-        Write-Log "BcContainerHelper module not found. Installing..." -Level WARN
-        try {
-            Install-Module BcContainerHelper -Force -Scope AllUsers
-            Import-Module BcContainerHelper -Force
-            Write-Log "BcContainerHelper installed successfully" -Level SUCCESS
-        }
-        catch {
-            throw "Failed to install BcContainerHelper module: $($_.Exception.Message)"
-        }
-    }
-    else {
-        Import-Module BcContainerHelper -Force
-        Write-Log "BcContainerHelper: v$($bcModule.Version)" -Level SUCCESS
-    }
+    Install-BcContainerHelperModule
 
     return $true
 }
@@ -973,6 +982,15 @@ function Show-DeploymentSummary {
 
 #region Main Script
 try {
+    # Module-only mode: install BcContainerHelper and exit. Does not touch
+    # Docker or deploy a container.
+    if ($InstallModuleOnly) {
+        Write-Log "Installing BcContainerHelper module only (no container deployment)..."
+        Install-BcContainerHelperModule
+        Write-Log "BcContainerHelper is ready" -Level SUCCESS
+        exit 0
+    }
+
     # Step 1: Verify prerequisites
     Test-Prerequisites | Out-Null
 

@@ -16,7 +16,7 @@ import {
   Network,
   Shield,
 } from 'lucide-react';
-import { isElectron, openExternal } from '@/lib/electron-api';
+import { isElectron, openExternal, startDockerDesktop } from '@/lib/electron-api';
 
 interface SetupStatus {
   docker: 'checking' | 'installed' | 'not_installed' | 'unknown' | 'error';
@@ -133,7 +133,13 @@ export default function SetupPage() {
         toast.success('BcContainerHelper installed!', { id: 'bchelper' });
         setStatus(prev => ({ ...prev, bcContainerHelper: 'installed' }));
       } else {
-        toast.error('Installation failed. Run PowerShell as Admin.', { id: 'bchelper' });
+        const detail = (result?.stderr || result?.stdout || '').trim().split('\n').pop();
+        toast.error(
+          detail
+            ? `Installation failed: ${detail}`
+            : 'Installation failed. Run PowerShell as Admin.',
+          { id: 'bchelper' }
+        );
       }
     } catch {
       toast.error('Installation failed', { id: 'bchelper' });
@@ -149,8 +155,12 @@ export default function SetupPage() {
     toast.loading('Starting Docker Desktop...', { id: 'docker-start' });
 
     try {
-      // Try to start Docker Desktop
-      await window.electronAPI?.powershell.run('cmd', ['/c', 'start', '', '"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"']);
+      const result = await startDockerDesktop();
+      if (!result.success) {
+        toast.error(`Failed to start Docker: ${result.error ?? 'unknown error'}`, { id: 'docker-start' });
+        return;
+      }
+
       toast.success('Docker Desktop starting...', { id: 'docker-start' });
 
       // Check status after a delay
