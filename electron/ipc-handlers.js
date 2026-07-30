@@ -10,6 +10,7 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk').default;
+const { APIConnectionError } = require('@anthropic-ai/sdk');
 const { buildContext, getOfflineResponse, listDocuments } = require('./rag-helper');
 const { app, safeStorage } = require('electron');
 
@@ -213,17 +214,40 @@ function buildApiMessages(messages, maxMessages = 10) {
   return windowed.map((m) => ({ role: m.role, content: m.content }));
 }
 
+// Socket-level failures raised by Node's networking stack. The Anthropic SDK
+// wraps these: the code lives on `error.cause`, not on the SDK error itself.
+const SOCKET_ERROR_CODES = ['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'];
+
 /**
  * True when an Anthropic SDK error is a transport/connectivity failure rather
  * than an API-level rejection. Only connectivity failures justify silently
  * degrading to the offline documentation responses.
+ *
+ * No SDK error class assigns `this.name`, so every one of them reports
+ * `name === 'Error'` (verified against @anthropic-ai/sdk 0.71.2). Reading
+ * `error.name` first therefore short-circuits on a truthy but useless value and
+ * makes any constructor-name fallback unreachable — which is why this checks
+ * the class first and treats `name` only as a last-resort hint for errors that
+ * have crossed a serialization boundary.
  */
 function isConnectivityError(error) {
-  if (!error) return false;
+  if (!error || typeof error !== 'object') return false;
+  // An HTTP status means the request reached the API and was rejected there.
   if (typeof error.status === 'number') return false;
-  const name = error.name || error.constructor?.name || '';
-  if (/^APIConnection(Timeout)?Error$/.test(name)) return true;
-  return ['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error.code);
+
+  // APIConnectionTimeoutError extends APIConnectionError, so one check covers both.
+  if (error instanceof APIConnectionError) return true;
+
+  const className = error.constructor?.name || '';
+  if (/^APIConnection(Timeout)?Error$/.test(className)) return true;
+  if (/^APIConnection(Timeout)?Error$/.test(error.name || '')) return true;
+
+  // Walk the cause chain: `new APIConnectionError({ cause })` keeps the
+  // underlying socket error (and its `code`) at `error.cause`.
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.cause, depth++) {
+    if (SOCKET_ERROR_CODES.includes(current.code)) return true;
+  }
+  return false;
 }
 
 /**

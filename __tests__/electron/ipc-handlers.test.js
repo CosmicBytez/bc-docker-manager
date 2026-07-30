@@ -22,6 +22,13 @@ jest.mock('../../electron/rag-helper', () => ({
 }));
 
 const {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  BadRequestError,
+  RateLimitError,
+} = require('@anthropic-ai/sdk');
+
+const {
   ALLOWED_SETTINGS_KEYS,
   READABLE_SETTINGS_KEYS,
   WRITE_ONLY_SETTINGS_KEYS,
@@ -209,24 +216,62 @@ describe('buildApiMessages', () => {
 });
 
 describe('isConnectivityError', () => {
+  // Cases are built from the installed SDK's own error classes. Hand-built
+  // `{ name: 'APIConnectionError' }` / `{ code: 'ENOTFOUND' }` objects are
+  // shapes the SDK never produces: no SDK error class assigns `this.name`
+  // (every one reports `name === 'Error'`), and the socket code lives on
+  // `error.cause`, not on the error itself.
+  const socketCause = (code) =>
+    Object.assign(new Error(`getaddrinfo ${code} api.anthropic.com`), { code });
+
+  it('is exercised against the real SDK error shapes, not hand-built stand-ins', () => {
+    const real = new APIConnectionError({ message: 'Connection error.', cause: socketCause('ENOTFOUND') });
+    // Pins the two properties that made the previous implementation dead code.
+    expect(real.name).toBe('Error');
+    expect(real.code).toBeUndefined();
+    expect(real.cause.code).toBe('ENOTFOUND');
+    expect(real.constructor.name).toBe('APIConnectionError');
+  });
+
   it('treats an HTTP status as an API-level rejection', () => {
-    expect(isConnectivityError({ status: 400, message: 'bad request' })).toBe(false);
+    const badRequest = new BadRequestError(
+      400,
+      { type: 'error', error: { type: 'invalid_request_error', message: 'bad' } },
+      'bad',
+      new Headers()
+    );
+    const rateLimited = new RateLimitError(
+      429,
+      { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } },
+      'slow down',
+      new Headers()
+    );
+    expect(isConnectivityError(badRequest)).toBe(false);
+    expect(isConnectivityError(rateLimited)).toBe(false);
     expect(isConnectivityError({ status: 401 })).toBe(false);
-    expect(isConnectivityError({ status: 429 })).toBe(false);
   });
 
-  it('recognises SDK connection failures', () => {
-    expect(isConnectivityError({ name: 'APIConnectionError' })).toBe(true);
-    expect(isConnectivityError({ name: 'APIConnectionTimeoutError' })).toBe(true);
+  it('recognises a real APIConnectionError', () => {
+    expect(
+      isConnectivityError(new APIConnectionError({ message: 'Connection error.', cause: socketCause('ENOTFOUND') }))
+    ).toBe(true);
   });
 
-  it('recognises socket-level failures', () => {
-    expect(isConnectivityError({ code: 'ENOTFOUND' })).toBe(true);
-    expect(isConnectivityError({ code: 'ECONNREFUSED' })).toBe(true);
+  it('recognises a real APIConnectionTimeoutError', () => {
+    expect(isConnectivityError(new APIConnectionTimeoutError({ message: 'Request timed out.' }))).toBe(true);
+  });
+
+  it('recognises a bare socket failure and one wrapped in a cause chain', () => {
+    // Not every transport failure arrives via the SDK — dockerode/undici raise
+    // the Node error directly.
+    expect(isConnectivityError(socketCause('ECONNREFUSED'))).toBe(true);
+    expect(isConnectivityError(new Error('wrapped', { cause: socketCause('EAI_AGAIN') }))).toBe(true);
   });
 
   it('does not treat arbitrary errors as connectivity failures', () => {
     expect(isConnectivityError(new Error('boom'))).toBe(false);
+    expect(isConnectivityError(new Error('nested', { cause: new Error('inner') }))).toBe(false);
     expect(isConnectivityError(null)).toBe(false);
+    expect(isConnectivityError('ENOTFOUND')).toBe(false);
   });
 });
