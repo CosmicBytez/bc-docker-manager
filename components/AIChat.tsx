@@ -223,15 +223,22 @@ How can I help you today?`,
       if (isElectron()) {
         // Use Electron IPC - this handles both online and offline modes
         try {
-          const chatMessages = [...messages, userMessage]
+          const history = [...messages, userMessage]
             .filter(m => m.role === 'user' || m.role === 'assistant')
             .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
+          // The Messages API rejects a conversation that opens on an assistant
+          // turn, and this transcript always starts with the welcome message.
+          const firstUserIndex = history.findIndex(m => m.role === 'user');
+          const chatMessages = firstUserIndex === -1 ? [] : history.slice(firstUserIndex);
+
           const result = await sendAIMessage(chatMessages);
           responseContent = result.content;
-        } catch {
-          // If API call fails, use offline response
-          responseContent = getOfflineResponse(userMessage.content);
+        } catch (err) {
+          // Surface the real failure instead of passing keyword-matched docs
+          // off as an answer.
+          const detail = err instanceof Error ? err.message : 'Unknown error';
+          responseContent = `**⚠️ Claude API request failed:** ${detail}\n\nShowing local documentation instead.\n\n---\n\n${getOfflineResponse(userMessage.content)}`;
         }
       } else {
         // Web mode - check for API key first
