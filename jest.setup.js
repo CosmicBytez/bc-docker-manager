@@ -1,7 +1,10 @@
 import '@testing-library/jest-dom';
 
-// Mock DOM APIs not available in JSDOM
-Element.prototype.scrollIntoView = jest.fn();
+// Mock DOM APIs not available in JSDOM.
+// Main-process tests run under `@jest-environment node`, where there is no DOM.
+if (typeof Element !== 'undefined') {
+  Element.prototype.scrollIntoView = jest.fn();
+}
 
 // Mock Next.js router
 jest.mock('next/navigation', () => ({

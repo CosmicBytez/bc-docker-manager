@@ -245,6 +245,70 @@ describe('AIChat', () => {
     });
   });
 
+  describe('Electron mode', () => {
+    beforeEach(() => {
+      mockIsElectron.mockReturnValue(true);
+      mockSendAIMessage.mockResolvedValue({ role: 'assistant', content: 'Claude says hi' });
+    });
+
+    const submit = async (text: string) => {
+      const input = screen.getByPlaceholderText('Describe your issue or ask a question...');
+      await act(async () => {
+        fireEvent.change(input, { target: { value: text } });
+        fireEvent.submit(input.closest('form')!);
+      });
+    };
+
+    // Regression: the transcript always opens with the assistant welcome
+    // message, and sending it verbatim made the Messages API reject every
+    // request with a 400 — which the old code masked as "offline mode".
+    it('never sends a conversation that starts with an assistant turn', async () => {
+      render(<AIChat />);
+      await waitFor(() => {
+        expect(screen.getByText(/I'm your BC Docker troubleshooting assistant/)).toBeInTheDocument();
+      });
+
+      await submit('Why is my container unhealthy?');
+
+      await waitFor(() => expect(mockSendAIMessage).toHaveBeenCalled());
+      const sent = mockSendAIMessage.mock.calls[0][0];
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent[0].role).toBe('user');
+      expect(sent[0].content).toBe('Why is my container unhealthy?');
+    });
+
+    it('still starts on a user turn after several exchanges', async () => {
+      render(<AIChat />);
+      await waitFor(() => {
+        expect(screen.getByText(/I'm your BC Docker troubleshooting assistant/)).toBeInTheDocument();
+      });
+
+      await submit('first question');
+      await waitFor(() => expect(screen.getByText('Claude says hi')).toBeInTheDocument());
+      await submit('second question');
+
+      await waitFor(() => expect(mockSendAIMessage).toHaveBeenCalledTimes(2));
+      for (const call of mockSendAIMessage.mock.calls) {
+        expect(call[0][0].role).toBe('user');
+      }
+      expect(mockSendAIMessage.mock.calls[1][0]).toHaveLength(3);
+    });
+
+    it('renders the API failure instead of passing offline docs off as an answer', async () => {
+      mockSendAIMessage.mockRejectedValue(new Error('Claude API error (HTTP 401): invalid x-api-key'));
+
+      render(<AIChat />);
+      await submit('My container will not start');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Claude API request failed/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/invalid x-api-key/)).toBeInTheDocument();
+      // The documentation is still shown, but labelled as a fallback.
+      expect(screen.getByText(/Port Conflicts/)).toBeInTheDocument();
+    });
+  });
+
   describe('Markdown Formatting', () => {
     it('should render bold text from messages', async () => {
       render(<AIChat />);
