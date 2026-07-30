@@ -244,7 +244,11 @@ describe('run-powershell-with-password', () => {
     expect(argv).not.toContain(password);
     expect(staged.path).toBeDefined();
     expect(staged.content).toBe(password);
-    expect(staged.mode).toBe(0o600);
+    if (process.platform !== 'win32') {
+      // libuv reports 0o666 for any writable file on Windows; the 0600 staging
+      // mode is only enforceable (and only meaningful) on POSIX.
+      expect(staged.mode).toBe(0o600);
+    }
     // Cleaned up in the handler's finally block.
     expect(realExistsSync(staged.path)).toBe(false);
   });
