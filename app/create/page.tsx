@@ -15,7 +15,7 @@ import {
 import {
   isElectron,
   runPowerShell,
-  setSetting,
+  runPowerShellWithPassword,
 } from '@/lib/electron-api';
 import { useDeployment } from '@/lib/deployment-context';
 import { detectHNSError, HNSError } from '@/lib/hns-error-detector';
@@ -133,11 +133,7 @@ export default function CreateContainerPage() {
       ];
 
       if (formData.auth === 'NavUserPassword') {
-        // Store password securely via Electron's safeStorage and pass via
-        // passwordFile convention — avoids plaintext password in CLI args
-        await setSetting('deployPassword', formData.password);
         args.push('-Username', formData.username);
-        args.push('-PasswordFile', 'env:BC_DEPLOY_PASSWORD');
       }
 
       if (formData.installTestToolkit) {
@@ -151,7 +147,12 @@ export default function CreateContainerPage() {
       addOutput(`Executing: Deploy-BC-Container.ps1 ${args.join(' ')}`);
       addOutput('');
 
-      const result = await runPowerShell(scriptPath, args);
+      // The password goes through a dedicated IPC path that stages it in a
+      // mode-600 temp file; it is deliberately absent from `args` above so it
+      // never reaches the command line or the deployment log.
+      const result = formData.auth === 'NavUserPassword'
+        ? await runPowerShellWithPassword(scriptPath, args, formData.password)
+        : await runPowerShell(scriptPath, args);
 
       if (result.exitCode === 0) {
         setDeploymentStatus('success');
