@@ -226,9 +226,8 @@ const SOCKET_ERROR_CODES = ['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOU
  * No SDK error class assigns `this.name`, so every one of them reports
  * `name === 'Error'` (verified against @anthropic-ai/sdk 0.71.2). Reading
  * `error.name` first therefore short-circuits on a truthy but useless value and
- * makes any constructor-name fallback unreachable — which is why this checks
- * the class first and treats `name` only as a last-resort hint for errors that
- * have crossed a serialization boundary.
+ * makes any constructor-name fallback unreachable — which is why `name` is not
+ * consulted at all and the class is checked instead.
  */
 function isConnectivityError(error) {
   if (!error || typeof error !== 'object') return false;
@@ -238,9 +237,13 @@ function isConnectivityError(error) {
   // APIConnectionTimeoutError extends APIConnectionError, so one check covers both.
   if (error instanceof APIConnectionError) return true;
 
+  // Fallback for the one case `instanceof` cannot see: a second copy of the SDK
+  // resolved elsewhere in node_modules throws errors of an identically named
+  // but structurally different class. `error.name` is deliberately NOT consulted
+  // — it is 'Error' on every SDK error, so it can only ever match a hand-built
+  // object that no SDK produces.
   const className = error.constructor?.name || '';
   if (/^APIConnection(Timeout)?Error$/.test(className)) return true;
-  if (/^APIConnection(Timeout)?Error$/.test(error.name || '')) return true;
 
   // Walk the cause chain: `new APIConnectionError({ cause })` keeps the
   // underlying socket error (and its `code`) at `error.cause`.

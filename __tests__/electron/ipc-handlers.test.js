@@ -28,6 +28,9 @@ const {
   RateLimitError,
 } = require('@anthropic-ai/sdk');
 
+// Alias so a locally shadowed look-alike class can be compared against the real one.
+const RealAPIConnectionError = APIConnectionError;
+
 const {
   ALLOWED_SETTINGS_KEYS,
   READABLE_SETTINGS_KEYS,
@@ -259,6 +262,27 @@ describe('isConnectivityError', () => {
 
   it('recognises a real APIConnectionTimeoutError', () => {
     expect(isConnectivityError(new APIConnectionTimeoutError({ message: 'Request timed out.' }))).toBe(true);
+  });
+
+  it('recognises any APIConnectionError subclass, whatever it is named', () => {
+    // Isolates the `instanceof` clause: the class name does not match the
+    // regex, so only the class check can accept this. Guards against the SDK
+    // adding a differently named transport-error subclass.
+    class TransportFailure extends APIConnectionError {}
+    const err = new TransportFailure({ message: 'Connection error.' });
+    expect(err.constructor.name).toBe('TransportFailure');
+    expect(isConnectivityError(err)).toBe(true);
+  });
+
+  it('recognises a same-named error class from a duplicate SDK copy', () => {
+    // A second @anthropic-ai/sdk resolved elsewhere in node_modules throws
+    // errors that fail `instanceof` against this module's copy. This is the
+    // only case the constructor-name clause can serve — without it that clause
+    // is dead code, which is exactly what the previous implementation was.
+    class APIConnectionError extends Error {}
+    const impostor = new APIConnectionError('Connection error.');
+    expect(impostor instanceof RealAPIConnectionError).toBe(false);
+    expect(isConnectivityError(impostor)).toBe(true);
   });
 
   it('recognises a bare socket failure and one wrapped in a cause chain', () => {
