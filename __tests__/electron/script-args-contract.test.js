@@ -130,10 +130,21 @@ function collectUsages(source, filePath) {
       flags.add(flag);
     }
 
-    if (flags.size > 0) {
+    // Argument VALUES, not just names. The wizard's original bug was
+    // `-PasswordFile 'env:BC_DEPLOY_PASSWORD'`: a PowerShell provider path that
+    // nothing expanded, so the script received the literal string. A
+    // name-only scan cannot see it — once -PasswordFile became a declared
+    // parameter the bogus value would pass unnoticed.
+    const sentinels = new Set();
+    for (const valueMatch of region.matchAll(/['"](\$?env:[^'"]*)['"]/gi)) {
+      sentinels.add(valueMatch[1]);
+    }
+
+    if (flags.size > 0 || sentinels.size > 0) {
       usages.push({
         script: ref[1],
         flags: [...flags],
+        sentinels: [...sentinels],
         file: path.relative(REPO_ROOT, filePath),
         line: lineNumber,
       });
@@ -143,12 +154,41 @@ function collectUsages(source, filePath) {
   return usages;
 }
 
+/**
+ * Collects the first string-literal argument of every PowerShell invocation in
+ * the renderer-side source. Non-literal first arguments (dispatch through a
+ * variable) are skipped — they cannot be checked statically.
+ */
+const PS_INVOCATION = /(?:powershell\s*\.\s*run|runPowerShellWithPassword|runPowerShell)\s*\(\s*(['"])([^'"]*)\1/g;
+
+function collectScriptTargets(source, filePath) {
+  const targets = [];
+  for (const match of source.matchAll(PS_INVOCATION)) {
+    targets.push({
+      script: match[2],
+      file: path.relative(REPO_ROOT, filePath),
+      line: source.slice(0, match.index).split('\n').length,
+    });
+  }
+  return targets;
+}
+
 const scripts = listScripts();
 const scriptsByName = new Map(scripts.map((s) => [s.name, s]));
 
 const usages = SCANNED_DIRS.flatMap((dir) =>
   listSourceFiles(path.join(REPO_ROOT, dir)).flatMap((file) =>
     collectUsages(fs.readFileSync(file, 'utf8'), file)
+  )
+);
+
+// The renderer may only ask for bundled scripts. electron/ is excluded: it
+// holds the whitelist declaration and the preload bridge, which legitimately
+// forward a caller-supplied script name.
+const RENDERER_DIRS = ['app', 'components', 'lib'];
+const scriptTargets = RENDERER_DIRS.flatMap((dir) =>
+  listSourceFiles(path.join(REPO_ROOT, dir)).flatMap((file) =>
+    collectScriptTargets(fs.readFileSync(file, 'utf8'), file)
   )
 );
 
@@ -200,6 +240,18 @@ describe('script argument contract', () => {
   ])('%s declares %s', (scriptName, param) => {
     expect(scriptsByName.get(scriptName).params).toContain(param);
   });
+
+  // Regression: the wizard passed `-PasswordFile 'env:BC_DEPLOY_PASSWORD'`.
+  // Nothing expands an `env:` provider path in argv, and no such variable was
+  // ever set, so the script received the literal string. Declaring the
+  // parameter (above) makes the name legal; only a value check catches this.
+  it('passes no `env:` provider path as an argument value', () => {
+    const offenders = usages
+      .filter((usage) => usage.sentinels.length > 0)
+      .map((usage) => `${usage.file}:${usage.line} passes ${usage.sentinels.join(', ')} to ${usage.script}`);
+
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe('main-process script whitelist', () => {
@@ -221,8 +273,44 @@ describe('main-process script whitelist', () => {
   // 'cmd' was passed to powershell.run to launch Docker Desktop; the handler
   // resolved { exitCode: 1 } instead of rejecting and the caller reported
   // success. Launching now goes through a dedicated main-process handler.
-  it('does not whitelist a general command runner', () => {
-    expect(whitelisted).not.toContain('cmd');
+  //
+  // Asserting `whitelisted` lacks 'cmd' cannot fail — that list is built by a
+  // regex restricted to 'scripts/*.ps1' literals, so a non-script entry is
+  // invisible to it. Parse the ALLOWED_SCRIPTS array itself instead: adding
+  // 'cmd' (or any non-script entry) to it fails this test.
+  const allowedScriptsBlock = /const ALLOWED_SCRIPTS = \[([\s\S]*?)\];/.exec(mainSource);
+  const allowedScripts = allowedScriptsBlock
+    ? [...allowedScriptsBlock[1].matchAll(/['"]([^'"]*)['"]/g)].map((m) => m[1])
+    : null;
+
+  it('parses the ALLOWED_SCRIPTS declaration', () => {
+    expect(allowedScripts).not.toBeNull();
+    expect(allowedScripts.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('allows nothing but bundled .ps1 scripts to be executed', () => {
+    const offenders = allowedScripts.filter((entry) => !/^scripts\/[A-Za-z0-9._-]+\.ps1$/.test(entry));
+    expect(offenders).toEqual([]);
+  });
+
+  it('routes Docker Desktop launching through its own handler', () => {
     expect(mainSource).toContain("ipcMain.handle('docker:start-desktop'");
+  });
+
+  // The revert this guards: app/setup/page.tsx calling
+  // `powershell.run('cmd', ['/c', 'start', ...])`.
+  it('never asks the PowerShell channel for anything but a bundled script', () => {
+    const offenders = scriptTargets
+      .filter((target) => !/^scripts\/[A-Za-z0-9._-]+\.ps1$/.test(target.script))
+      .map((target) => `${target.file}:${target.line} runs '${target.script}' via the PowerShell channel`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('finds the statically resolvable renderer invocations it is meant to guard', () => {
+    // Guards the guard: if the scan stops matching, the assertion above turns
+    // vacuous without anything failing.
+    expect(scriptTargets.map((t) => t.script)).toContain('scripts/Install-BC-Helper.ps1');
+    expect(scriptTargets.map((t) => t.script)).toContain('scripts/Diagnose-HNS-Ports.ps1');
   });
 });

@@ -376,6 +376,17 @@ function setupIpcHandlers() {
 
   // Launches Docker Desktop. Deliberately not a general "open any path" channel —
   // the renderer can only ask for this one known executable.
+  //
+  // UNVERIFIED ON WINDOWS. Two known limits, neither exercised by the test
+  // suite (this container has no Windows, no Docker Desktop and no Electron
+  // runtime):
+  //  1. The install location is hardcoded to the two default paths below. A
+  //     per-user or relocated install reports "not found" on a machine where
+  //     Docker Desktop is installed.
+  //  2. Electron documents shell.openPath as opening a path with the desktop's
+  //     default handler; launching an .exe is not an explicitly guaranteed
+  //     contract, and Windows shell policy can intercept it.
+  // Smoke-test both on Windows before shipping — see the repair report.
   const DOCKER_DESKTOP_PATHS = [
     'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe',
     'C:\\Program Files (x86)\\Docker\\Docker\\Docker Desktop.exe',
