@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import {
   isElectron,
-  getSetting,
+  getAllSettings,
   setSetting,
   getAppInfo,
   listContainers,
@@ -43,6 +43,7 @@ export default function SettingsPage() {
     theme: 'dark',
   });
   const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyStored, setApiKeyStored] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -52,17 +53,17 @@ export default function SettingsPage() {
 
   const loadSettings = useCallback(async () => {
     try {
-      // Load settings
-      const apiKey = await getSetting<string>('anthropicApiKey');
-      const backupRoot = await getSetting<string>('backupRoot');
-      const refreshInterval = await getSetting<number>('autoRefreshInterval');
+      // The API key is write-only — the main process reports whether one is
+      // stored but never returns the value, so the input starts empty.
+      const stored = await getAllSettings();
 
       setSettings((prev) => ({
         ...prev,
-        anthropicApiKey: apiKey || '',
-        backupRoot: backupRoot || 'C:\\BCBackups',
-        autoRefreshInterval: refreshInterval || 30,
+        anthropicApiKey: '',
+        backupRoot: (stored.backupRoot as string) || 'C:\\BCBackups',
+        autoRefreshInterval: (stored.autoRefreshInterval as number) || 30,
       }));
+      setApiKeyStored(Boolean(stored.anthropicApiKeySet));
 
       // Get app info
       const info = await getAppInfo();
@@ -82,18 +83,35 @@ export default function SettingsPage() {
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      await setSetting('anthropicApiKey', settings.anthropicApiKey);
+      // An empty field means "leave the stored key alone" — the current value
+      // is never loaded back into the input, so saving it would wipe the key.
+      if (settings.anthropicApiKey) {
+        await setSetting('anthropicApiKey', settings.anthropicApiKey);
+        setSettings((prev) => ({ ...prev, anthropicApiKey: '' }));
+        setApiKeyStored(true);
+      }
       await setSetting('backupRoot', settings.backupRoot);
       await setSetting('autoRefreshInterval', settings.autoRefreshInterval);
 
       toast.success('Settings saved successfully');
     } catch (error) {
-      toast.error('Failed to save settings');
+      toast.error(error instanceof Error ? error.message : 'Failed to save settings');
       console.error(error);
     } finally {
       setSaving(false);
     }
   }, [settings]);
+
+  const handleClearApiKey = useCallback(async () => {
+    try {
+      await setSetting('anthropicApiKey', '');
+      setSettings((prev) => ({ ...prev, anthropicApiKey: '' }));
+      setApiKeyStored(false);
+      toast.success('Stored API key removed');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove API key');
+    }
+  }, []);
 
   const runDiagnostics = useCallback(async () => {
     setLoadingDiagnostics(true);
@@ -179,6 +197,9 @@ export default function SettingsPage() {
               console.anthropic.com
             </a>
           </p>
+          <p className={`text-sm mb-3 ${apiKeyStored ? 'text-green-400' : 'text-gray-400'}`}>
+            {apiKeyStored ? 'A key is stored and encrypted' : 'No key stored'}
+          </p>
           <div className="relative">
             <input
               type={showApiKey ? 'text' : 'password'}
@@ -186,7 +207,7 @@ export default function SettingsPage() {
               onChange={(e) =>
                 setSettings((prev) => ({ ...prev, anthropicApiKey: e.target.value }))
               }
-              placeholder="sk-ant-..."
+              placeholder={apiKeyStored ? 'Enter a new key to replace the stored one' : 'sk-ant-...'}
               className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 pr-10 focus:outline-none focus:border-blue-500"
             />
             <button
@@ -197,6 +218,19 @@ export default function SettingsPage() {
               {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          <p className="text-xs text-gray-500 mt-2">
+            The stored key never leaves the main process, so it cannot be displayed here.
+            Leave this blank to keep the existing key.
+          </p>
+          {apiKeyStored && (
+            <button
+              type="button"
+              onClick={handleClearApiKey}
+              className="mt-3 text-sm text-red-400 hover:text-red-300"
+            >
+              Remove stored key
+            </button>
+          )}
         </div>
 
         {/* Backup Path */}

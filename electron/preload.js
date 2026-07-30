@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeContainer: (id, force) => ipcRenderer.invoke('docker:remove-container', id, force),
     getDockerInfo: () => ipcRenderer.invoke('docker:get-info'),
     getDiagnostics: (containerId) => ipcRenderer.invoke('docker:diagnostics', containerId),
+    startDesktop: () => ipcRenderer.invoke('docker:start-desktop'),
   },
 
   // Backup Operations
@@ -44,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // PowerShell Script Execution
   powershell: {
     run: (script, args) => ipcRenderer.invoke('run-powershell', { script, args }),
+    // Password is written to a mode-600 temp file in the main process and
+    // passed as -PasswordFile; it never reaches argv or the settings store.
+    runWithPassword: (script, args, password) =>
+      ipcRenderer.invoke('run-powershell-with-password', { script, args, password }),
     onOutput: (callback) => {
       const subscription = (event, data) => callback(data);
       ipcRenderer.on('powershell-output', subscription);

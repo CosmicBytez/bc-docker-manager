@@ -22,6 +22,7 @@ interface ElectronAPI {
     restartContainer: (id: string) => Promise<ApiResponse<void>>;
     removeContainer: (id: string, force?: boolean) => Promise<ApiResponse<void>>;
     getDockerInfo: () => Promise<ApiResponse<DockerInfo>>;
+    startDesktop: () => Promise<{ success: boolean; error?: string }>;
   };
   backups: {
     list: (containerName?: string) => Promise<ApiResponse<BackupInfo[]>>;
@@ -35,6 +36,7 @@ interface ElectronAPI {
   };
   powershell: {
     run: (script: string, args: string[]) => Promise<PowerShellResult>;
+    runWithPassword: (script: string, args: string[], password: string) => Promise<PowerShellResult>;
     onOutput: (callback: (data: { type: string; data: string }) => void) => () => void;
   };
   settings: {

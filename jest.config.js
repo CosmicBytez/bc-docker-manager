@@ -20,6 +20,7 @@ const customJestConfig = {
     'components/**/*.{js,jsx,ts,tsx}',
     'lib/**/*.{js,jsx,ts,tsx}',
     'app/**/*.{js,jsx,ts,tsx}',
+    'electron/**/*.js',
     '!**/*.d.ts',
     '!**/node_modules/**',
   ],

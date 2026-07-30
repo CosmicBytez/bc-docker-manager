@@ -9,8 +9,8 @@ Desktop application (Electron 41 + Next.js 16) for managing Business Central Doc
 - **Desktop shell**: Electron 41 (main + preload + IPC handlers)
 - **Frontend**: Next.js 16 (App Router, static export), React 19, TypeScript
 - **Styling**: Tailwind CSS with custom theme
-- **AI**: `@anthropic-ai/sdk` called directly from the Electron main process via IPC (renderer never sees the key)
-- **PowerShell**: Bundled scripts executed from the main process; streaming stdout via IPC
+- **AI**: `@anthropic-ai/sdk` called directly from the Electron main process via IPC. `anthropicApiKey` is **write-only**: `settings:set` accepts it, but `settings:get` rejects it and `settings:get-all` returns only an `anthropicApiKeySet` boolean, so the decrypted key never reaches the renderer.
+- **PowerShell**: Bundled scripts executed from the main process; streaming stdout via IPC. Scripts that need a password use `run-powershell-with-password`, which stages the secret in a mode-600 temp file and passes `-PasswordFile <path>` — the password never touches argv, the settings store, or the output log.
 - **Docker**: Docker Engine API via named pipe (`//./pipe/docker_engine`) in web mode
 
 ## Architecture
@@ -73,6 +73,15 @@ npm run test:coverage # With coverage report
 
 Test files in `__tests__/` directory using React Testing Library.
 
+`__tests__/electron/` covers the main process and runs under
+`@jest-environment node` (the docblock is required — `jest.setup.js` skips its
+DOM stubs when there is no DOM). `script-args-contract.test.js` parses every
+`scripts/*.ps1` param block and asserts that each `-Flag` passed from `app/`,
+`components/`, `electron/`, or `lib/` exists in the target script. PowerShell
+scripts use `[CmdletBinding()]`, so an undeclared parameter is a binding error
+that kills the script before its body runs — add the parameter and the call
+site together, or this test fails.
+
 ## Container Naming Convention
 
 The app filters for Docker containers whose name contains `bc` (case-insensitive).
@@ -132,9 +141,13 @@ Desktop app settings are stored in:
 - Windows: `%APPDATA%/bc-container-manager/settings.json`
 
 Available settings:
-- `anthropicApiKey` - Claude API key for troubleshooting
+- `anthropicApiKey` - Claude API key for troubleshooting (write-only; encrypted at rest via `safeStorage`)
 - `backupRoot` - Backup directory path
-- `autoRefreshInterval` - Dashboard refresh rate
+- `autoRefreshInterval` - Dashboard refresh rate, in **seconds** (the dashboard multiplies by 1000; the main-process validator accepts 5–3600)
+
+`settings:set` returns `{ success: false }` for a key outside the allowlist or a
+value that fails its validator, and `setSetting()` in `lib/electron-api.ts`
+throws on that response — a save that reports success really did persist.
 
 ## Building for Distribution
 

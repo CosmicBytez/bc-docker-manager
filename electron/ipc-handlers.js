@@ -10,6 +10,7 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk').default;
+const { APIConnectionError } = require('@anthropic-ai/sdk');
 const { buildContext, getOfflineResponse, listDocuments } = require('./rag-helper');
 const { app, safeStorage } = require('electron');
 
@@ -163,6 +164,94 @@ const ENCRYPTED_PREFIX = 'enc:';
 
 // Keys that should be encrypted at rest
 const ENCRYPTED_KEYS = ['anthropicApiKey'];
+
+// ============================================
+// Settings allowlists & validators
+// ============================================
+
+const ALLOWED_SETTINGS_KEYS = [
+  'anthropicApiKey', 'backupRoot', 'autoRefreshInterval',
+  'theme', 'dockerSocketPath', 'defaultBcVersion',
+];
+
+// Write-only keys are accepted by settings:set but never handed back to the
+// renderer — the decrypted API key must not leave the main process.
+const WRITE_ONLY_SETTINGS_KEYS = ['anthropicApiKey'];
+
+const READABLE_SETTINGS_KEYS = ALLOWED_SETTINGS_KEYS.filter(
+  (key) => !WRITE_ONLY_SETTINGS_KEYS.includes(key)
+);
+
+const SETTINGS_VALIDATORS = {
+  anthropicApiKey: (v) => typeof v === 'string' && v.length <= 500,
+  backupRoot: (v) => typeof v === 'string' && v.length <= 260,
+  // SECONDS, not milliseconds — the settings page stores seconds and the
+  // dashboard multiplies by 1000 on read.
+  autoRefreshInterval: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 5 && v <= 3600,
+  theme: (v) => typeof v === 'string' && ['light', 'dark', 'system'].includes(v),
+  dockerSocketPath: (v) => typeof v === 'string' && v.length <= 260,
+  defaultBcVersion: (v) => typeof v === 'string' && v.length <= 100,
+};
+
+/**
+ * Builds the message window sent to the Messages API.
+ * The API rejects a conversation whose first message is an assistant turn, so
+ * leading assistant messages (the UI's welcome message, offline fallbacks) are
+ * dropped and the window is re-trimmed to start on a user turn.
+ * @param {Array<{role: string, content: string}>} messages
+ * @param {number} maxMessages - size of the trailing window
+ * @returns {Array<{role: string, content: string}>}
+ */
+function buildApiMessages(messages, maxMessages = 10) {
+  const startFromFirstUser = (list) => {
+    const firstUser = list.findIndex((m) => m.role === 'user');
+    return firstUser === -1 ? [] : list.slice(firstUser);
+  };
+
+  const trimmed = startFromFirstUser(messages);
+  const windowed = startFromFirstUser(trimmed.slice(-maxMessages));
+
+  return windowed.map((m) => ({ role: m.role, content: m.content }));
+}
+
+// Socket-level failures raised by Node's networking stack. The Anthropic SDK
+// wraps these: the code lives on `error.cause`, not on the SDK error itself.
+const SOCKET_ERROR_CODES = ['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'];
+
+/**
+ * True when an Anthropic SDK error is a transport/connectivity failure rather
+ * than an API-level rejection. Only connectivity failures justify silently
+ * degrading to the offline documentation responses.
+ *
+ * No SDK error class assigns `this.name`, so every one of them reports
+ * `name === 'Error'` (verified against @anthropic-ai/sdk 0.71.2). Reading
+ * `error.name` first therefore short-circuits on a truthy but useless value and
+ * makes any constructor-name fallback unreachable — which is why `name` is not
+ * consulted at all and the class is checked instead.
+ */
+function isConnectivityError(error) {
+  if (!error || typeof error !== 'object') return false;
+  // An HTTP status means the request reached the API and was rejected there.
+  if (typeof error.status === 'number') return false;
+
+  // APIConnectionTimeoutError extends APIConnectionError, so one check covers both.
+  if (error instanceof APIConnectionError) return true;
+
+  // Fallback for the one case `instanceof` cannot see: a second copy of the SDK
+  // resolved elsewhere in node_modules throws errors of an identically named
+  // but structurally different class. `error.name` is deliberately NOT consulted
+  // — it is 'Error' on every SDK error, so it can only ever match a hand-built
+  // object that no SDK produces.
+  const className = error.constructor?.name || '';
+  if (/^APIConnection(Timeout)?Error$/.test(className)) return true;
+
+  // Walk the cause chain: `new APIConnectionError({ cause })` keeps the
+  // underlying socket error (and its `code`) at `error.cause`.
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 5; current = current.cause, depth++) {
+    if (SOCKET_ERROR_CODES.includes(current.code)) return true;
+  }
+  return false;
+}
 
 /**
  * Encrypts a string value using Electron's safeStorage (OS keychain).
@@ -922,14 +1011,16 @@ function registerIpcHandlers(ipcMain) {
       const ragContext = await buildContext(lastUserMessage.content);
       const systemPrompt = buildSystemPrompt(containerContext, ragContext);
 
+      const apiMessages = buildApiMessages(messages, 10);
+      if (apiMessages.length === 0) {
+        return { success: false, error: 'No user message provided' };
+      }
+
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 2048,
         system: systemPrompt,
-        messages: messages.slice(-10).map(m => ({
-          role: m.role,
-          content: m.content,
-        })),
+        messages: apiMessages,
       });
 
       return {
@@ -940,24 +1031,31 @@ function registerIpcHandlers(ipcMain) {
         }
       };
     } catch (error) {
-      // Fallback to offline mode on API error
-      try {
-        const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-        if (lastUserMessage) {
-          const offlineResponse = await getOfflineResponse(lastUserMessage.content);
-          return {
-            success: true,
-            data: {
-              content: offlineResponse.content + `\n\n---\n*📚 Offline mode (API error: ${error.message})*`,
-              role: 'assistant',
-              isOffline: true,
-            }
-          };
+      // Only a connectivity failure degrades to local documentation. An
+      // API-level rejection (bad key, 400, rate limit) must reach the user —
+      // masking it as "offline mode" hides a broken configuration forever.
+      if (isConnectivityError(error)) {
+        try {
+          const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+          if (lastUserMessage) {
+            const offlineResponse = await getOfflineResponse(lastUserMessage.content);
+            return {
+              success: true,
+              data: {
+                content: offlineResponse.content + `\n\n---\n*📚 Offline mode (could not reach the Claude API: ${getErrorMessage(error)})*`,
+                role: 'assistant',
+                isOffline: true,
+                sources: offlineResponse.sources,
+              }
+            };
+          }
+        } catch {
+          // Fall through to the error response below
         }
-      } catch (fallbackError) {
-        // Ignore fallback errors
       }
-      return { success: false, error: getErrorMessage(error) };
+
+      const status = typeof error?.status === 'number' ? ` (HTTP ${error.status})` : '';
+      return { success: false, error: `Claude API error${status}: ${getErrorMessage(error)}` };
     }
   });
 
@@ -975,24 +1073,13 @@ function registerIpcHandlers(ipcMain) {
   // Settings Handlers
   // ============================================
 
-  const ALLOWED_SETTINGS_KEYS = [
-    'anthropicApiKey', 'backupRoot', 'autoRefreshInterval',
-    'theme', 'dockerSocketPath', 'defaultBcVersion',
-  ];
-
-  const SETTINGS_VALIDATORS = {
-    anthropicApiKey: (v) => typeof v === 'string' && v.length <= 500,
-    backupRoot: (v) => typeof v === 'string' && v.length <= 260,
-    autoRefreshInterval: (v) => typeof v === 'number' && v >= 1000 && v <= 300000,
-    theme: (v) => typeof v === 'string' && ['light', 'dark', 'system'].includes(v),
-    dockerSocketPath: (v) => typeof v === 'string' && v.length <= 260,
-    defaultBcVersion: (v) => typeof v === 'string' && v.length <= 100,
-  };
-
   ipcMain.handle('settings:get', async (event, key) => {
     // Validate key is in the allowlist to prevent reading arbitrary data
     if (!key || typeof key !== 'string' || !ALLOWED_SETTINGS_KEYS.includes(key)) {
       return { success: false, error: 'Invalid settings key' };
+    }
+    if (WRITE_ONLY_SETTINGS_KEYS.includes(key)) {
+      return { success: false, error: `Setting "${key}" is write-only` };
     }
     const settings = await loadSettings();
     return { success: true, data: settings[key] };
@@ -1019,10 +1106,15 @@ function registerIpcHandlers(ipcMain) {
   ipcMain.handle('settings:get-all', async () => {
     const settings = await loadSettings();
     const filtered = {};
-    for (const key of ALLOWED_SETTINGS_KEYS) {
+    for (const key of READABLE_SETTINGS_KEYS) {
       if (key in settings) {
         filtered[key] = settings[key];
       }
+    }
+    // Write-only keys are reported as set/unset flags so the UI can show state
+    // without ever receiving the secret itself.
+    for (const key of WRITE_ONLY_SETTINGS_KEYS) {
+      filtered[`${key}Set`] = Boolean(settings[key]);
     }
     return { success: true, data: filtered };
   });
@@ -1338,4 +1430,15 @@ async function safeReadDir(dirPath) {
   }
 }
 
-module.exports = { registerIpcHandlers };
+module.exports = {
+  registerIpcHandlers,
+  // Exported for unit tests
+  ALLOWED_SETTINGS_KEYS,
+  READABLE_SETTINGS_KEYS,
+  WRITE_ONLY_SETTINGS_KEYS,
+  SETTINGS_VALIDATORS,
+  validateContainerId,
+  validateFilePath,
+  buildApiMessages,
+  isConnectivityError,
+};

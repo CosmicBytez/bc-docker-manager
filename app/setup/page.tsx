@@ -16,7 +16,7 @@ import {
   Network,
   Shield,
 } from 'lucide-react';
-import { isElectron, openExternal } from '@/lib/electron-api';
+import { isElectron, openExternal, startDockerDesktop } from '@/lib/electron-api';
 
 interface SetupStatus {
   docker: 'checking' | 'installed' | 'not_installed' | 'unknown' | 'error';
@@ -133,7 +133,13 @@ export default function SetupPage() {
         toast.success('BcContainerHelper installed!', { id: 'bchelper' });
         setStatus(prev => ({ ...prev, bcContainerHelper: 'installed' }));
       } else {
-        toast.error('Installation failed. Run PowerShell as Admin.', { id: 'bchelper' });
+        const detail = (result?.stderr || result?.stdout || '').trim().split('\n').pop();
+        toast.error(
+          detail
+            ? `Installation failed: ${detail}`
+            : 'Installation failed. Run PowerShell as Admin.',
+          { id: 'bchelper' }
+        );
       }
     } catch {
       toast.error('Installation failed', { id: 'bchelper' });
@@ -149,8 +155,12 @@ export default function SetupPage() {
     toast.loading('Starting Docker Desktop...', { id: 'docker-start' });
 
     try {
-      // Try to start Docker Desktop
-      await window.electronAPI?.powershell.run('cmd', ['/c', 'start', '', '"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"']);
+      const result = await startDockerDesktop();
+      if (!result.success) {
+        toast.error(`Failed to start Docker: ${result.error ?? 'unknown error'}`, { id: 'docker-start' });
+        return;
+      }
+
       toast.success('Docker Desktop starting...', { id: 'docker-start' });
 
       // Check status after a delay
@@ -313,7 +323,13 @@ export default function SetupPage() {
           {systemInfo.bcHelperVersion && (
             <p className="text-xs text-gray-500 mt-1">v{systemInfo.bcHelperVersion}</p>
           )}
-          {status.bcContainerHelper === 'not_installed' && (
+          {/* No probe can distinguish installed from missing yet, so the
+              action is offered whenever the state is unknown — the script's
+              module-only mode is idempotent (installs, or imports and reports
+              the version). Gating on 'not_installed' alone made this button
+              unreachable: checkAllStatus never yields that value. */}
+          {(status.bcContainerHelper === 'not_installed' ||
+            status.bcContainerHelper === 'unknown') && (
             <button
               onClick={handleInstallBcHelper}
               className="mt-4 w-full btn-primary flex items-center justify-center gap-2"

@@ -28,6 +28,11 @@
 .PARAMETER Password
     Admin password for NavUserPassword auth (required for NavUserPassword)
 
+.PARAMETER PasswordFile
+    Path to a file containing the admin password. Used by the BC Docker Manager app
+    so the password never appears on the command line. The file is deleted as soon
+    as it has been read. Takes precedence over -Password.
+
 .PARAMETER Isolation
     Container isolation mode: process or hyperv (default: process)
 
@@ -75,6 +80,9 @@ param(
 
     [Parameter(Mandatory=$false)]
     [string]$Password,
+
+    [Parameter(Mandatory=$false)]
+    [string]$PasswordFile,
 
     [Parameter(Mandatory=$false)]
     [ValidateSet('process','hyperv')]
@@ -565,6 +573,25 @@ try {
     Write-Log "Container: $ContainerName"
     Write-Log "Version: $Version"
     Write-Log "Isolation: $Isolation"
+
+    # Consume -PasswordFile if supplied. The file is written mode-600 by the app
+    # and must not outlive this read, so delete it whether or not the read throws.
+    if ($PasswordFile) {
+        if (-not (Test-Path -LiteralPath $PasswordFile -PathType Leaf)) {
+            throw "PasswordFile not found: $PasswordFile"
+        }
+        try {
+            # Strip only a single trailing newline; a password may legitimately
+            # contain other whitespace, so Trim() would corrupt it.
+            $Password = [System.IO.File]::ReadAllText($PasswordFile) -replace '\r?\n$', ''
+        }
+        finally {
+            Remove-Item -LiteralPath $PasswordFile -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $Password) {
+            throw "PasswordFile was empty: $PasswordFile"
+        }
+    }
 
     # Validate password for NavUserPassword auth
     if ($Auth -eq 'NavUserPassword' -and -not $Password) {
