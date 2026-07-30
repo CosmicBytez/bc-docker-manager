@@ -8,7 +8,8 @@ on:
 jobs:
   security-audit:
     name: Security Audit
-    runs-on: self-hosted
+    # Public repo — org self-hosted runner group doesn't serve it. See ci.yml.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
