@@ -29,6 +29,7 @@ interface ElectronAPI {
     restartContainer: (id: string) => Promise<ApiResponse<void>>;
     removeContainer: (id: string, force?: boolean) => Promise<ApiResponse<void>>;
     getDockerInfo: () => Promise<ApiResponse<DockerInfo>>;
+    startDesktop: () => Promise<{ success: boolean; error?: string }>;
   };
   backups: {
     list: (containerName?: string) => Promise<ApiResponse<BackupInfo[]>>;
@@ -42,6 +43,7 @@ interface ElectronAPI {
   };
   powershell: {
     run: (script: string, args: string[]) => Promise<PowerShellResult>;
+    runWithPassword: (script: string, args: string[], password: string) => Promise<PowerShellResult>;
     onOutput: (callback: (data: { type: string; data: string }) => void) => () => void;
   };
   settings: {
@@ -396,6 +398,25 @@ export async function runPowerShell(
   return electron.powershell.run(script, args);
 }
 
+/**
+ * Runs a script that needs a password. The password is handed to the main
+ * process, which stages it in a mode-600 temp file and passes -PasswordFile.
+ * It is never written to the settings store or to a command line.
+ */
+export async function runPowerShellWithPassword(
+  script: string,
+  args: string[],
+  password: string
+): Promise<PowerShellResult> {
+  const electron = getElectronAPI();
+
+  if (!electron) {
+    throw new Error('PowerShell execution is only available in the desktop app');
+  }
+
+  return electron.powershell.runWithPassword(script, args, password);
+}
+
 export function onPowerShellOutput(
   callback: (data: { type: string; data: string }) => void
 ): () => void {
@@ -451,7 +472,28 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
     return;
   }
 
-  await electron.settings.set(key, value);
+  const result = await electron.settings.set(key, value);
+  // A rejected key or a failed validator must surface — silently discarding
+  // { success: false } is what let disallowed keys and out-of-range values
+  // look like successful saves.
+  if (!result?.success) {
+    throw new Error(result?.error || `Failed to save setting "${key}"`);
+  }
+}
+
+/**
+ * Launches Docker Desktop via the main process.
+ * Returns the handler result so the caller can distinguish success from a
+ * missing installation.
+ */
+export async function startDockerDesktop(): Promise<{ success: boolean; error?: string }> {
+  const electron = getElectronAPI();
+
+  if (!electron) {
+    return { success: false, error: 'Desktop app required' };
+  }
+
+  return electron.docker.startDesktop();
 }
 
 export async function getAllSettings(): Promise<Record<string, unknown>> {
