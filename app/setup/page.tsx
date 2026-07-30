@@ -323,7 +323,13 @@ export default function SetupPage() {
           {systemInfo.bcHelperVersion && (
             <p className="text-xs text-gray-500 mt-1">v{systemInfo.bcHelperVersion}</p>
           )}
-          {status.bcContainerHelper === 'not_installed' && (
+          {/* No probe can distinguish installed from missing yet, so the
+              action is offered whenever the state is unknown — the script's
+              module-only mode is idempotent (installs, or imports and reports
+              the version). Gating on 'not_installed' alone made this button
+              unreachable: checkAllStatus never yields that value. */}
+          {(status.bcContainerHelper === 'not_installed' ||
+            status.bcContainerHelper === 'unknown') && (
             <button
               onClick={handleInstallBcHelper}
               className="mt-4 w-full btn-primary flex items-center justify-center gap-2"

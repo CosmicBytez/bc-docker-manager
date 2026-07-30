@@ -8,15 +8,14 @@
  * `startDockerDesktop` wrapper alone leaves this file unguarded, so these tests
  * drive the rendered page.
  *
- * NOTE ON COVERAGE: the sibling "Install BcContainerHelper" action is NOT
- * covered here because it is currently unreachable. `checkAllStatus` never
- * assigns `bcContainerHelper: 'not_installed'` (grep: the literal appears only
- * in the type union, the status-formatting switches and the render guards), and
- * the Install Module button is gated on exactly that value. See the repair
- * report — this is a live gap, not a testing shortcut.
+ * The "Install BcContainerHelper" action was unreachable until the button was
+ * also offered for the 'unknown' state: `checkAllStatus` never assigns
+ * `bcContainerHelper: 'not_installed'` (no probe exists), and the button was
+ * gated on exactly that value. The tests below drive the now-reachable action
+ * end to end against the rendered page.
  */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SetupPage from '@/app/setup/page';
 
@@ -111,15 +110,49 @@ describe('Setup page — Start Docker Desktop', () => {
 });
 
 describe('Setup page — BcContainerHelper install action', () => {
-  // Characterisation, not a guard: this pins the reachability gap described in
-  // the file header. When it fails, someone has added a real probe that can
-  // yield 'not_installed' — at that point add the toast assertions for the
-  // failure path of handleInstallBcHelper.
-  it('never renders the Install Module button because no probe yields not_installed', async () => {
+  async function clickInstallModule(user: ReturnType<typeof userEvent.setup>) {
+    const button = await screen.findByRole('button', { name: /Install Module/i });
+    await user.click(button);
+  }
+
+  it('offers the action while the module state is unknown (no probe exists)', async () => {
     getDockerInfo.mockResolvedValue({ success: true, data: { version: '27.0', containers: 3 } });
     render(<SetupPage />);
 
-    await waitFor(() => expect(screen.getByText('BcContainerHelper')).toBeInTheDocument());
+    expect(await screen.findByRole('button', { name: /Install Module/i })).toBeInTheDocument();
+  });
+
+  it('runs the module-only install and flips the tile on success', async () => {
+    powershellRun.mockResolvedValue({ stdout: 'BcContainerHelper is ready', stderr: '', exitCode: 0 });
+    const user = userEvent.setup();
+    render(<SetupPage />);
+
+    await clickInstallModule(user);
+
+    await waitFor(() =>
+      expect(powershellRun).toHaveBeenCalledWith('scripts/Install-BC-Helper.ps1', [
+        '-InstallModuleOnly',
+      ])
+    );
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+    const tile = screen.getByText('BcContainerHelper').closest('.card') as HTMLElement;
+    expect(await within(tile).findByText('Installed')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Install Module/i })).not.toBeInTheDocument();
+  });
+
+  it("surfaces the script's own error when the install fails", async () => {
+    powershellRun.mockResolvedValue({
+      stdout: '',
+      stderr: 'Failed to install BcContainerHelper module: access denied',
+      exitCode: 1,
+    });
+    const user = userEvent.setup();
+    render(<SetupPage />);
+
+    await clickInstallModule(user);
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled());
+    expect(mockToastError.mock.calls[0][0]).toContain('access denied');
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 });
