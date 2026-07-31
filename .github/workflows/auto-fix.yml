@@ -6,9 +6,7 @@ on:
 
 jobs:
   auto-fix:
-    # Public repo — the org self-hosted runner group doesn't serve it (jobs
-    # queue forever); hosted is free and safer here. See ci.yml.
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: write
     steps:

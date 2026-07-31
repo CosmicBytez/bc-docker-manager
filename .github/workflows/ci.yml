@@ -12,11 +12,5 @@ jobs:
     uses: CosmicBytez/.github/.github/workflows/ci-node.yml@v1
     with:
       node-version: "22"
-      # Hosted runner: this repo is PUBLIC and the org's Default self-hosted
-      # runner group does not serve public repos — self-hosted jobs here queue
-      # forever (every CI run before 2026-07-30 sat queued and expired). Hosted
-      # is also the safe choice for a public repo, and free.
-      runs-on: ubuntu-latest
-      cache: npm
       type-check-command: npx tsc --noEmit
       test-command: npm test -- --coverage --ci
