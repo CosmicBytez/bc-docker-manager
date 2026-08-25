@@ -31,6 +31,8 @@ const {
 // Alias so a locally shadowed look-alike class can be compared against the real one.
 const RealAPIConnectionError = APIConnectionError;
 
+const path = require('path');
+
 const {
   ALLOWED_SETTINGS_KEYS,
   READABLE_SETTINGS_KEYS,
@@ -81,7 +83,9 @@ describe('validateFilePath', () => {
   it('accepts a path inside the allowed root', () => {
     const result = validateFilePath('/backups/bcserver/db.bak', root);
     expect(result.valid).toBe(true);
-    expect(result.resolvedPath).toBe('/backups/bcserver/db.bak');
+    // validateFilePath resolves with the platform's path rules (D:\... on the
+    // Windows CI runner), so the expectation must resolve the same way.
+    expect(result.resolvedPath).toBe(path.resolve('/backups/bcserver/db.bak'));
   });
 
   it('accepts the root itself', () => {
