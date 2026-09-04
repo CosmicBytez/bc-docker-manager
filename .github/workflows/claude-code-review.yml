@@ -24,7 +24,13 @@ jobs:
     runs-on: self-hosted
     permissions:
       contents: read
-      pull-requests: read
+      # WRITE, not read: the reviewer posts inline comments via
+      # mcp__github_inline_comment__create_inline_comment and summaries via
+      # `gh pr comment`. With read, the one run that ever reached the model
+      # (azu-subscription-tracker #40, 2026-07-30, $0.199 billed) ended with
+      # "No buffered inline comments" and posted nothing. Matches the action's
+      # own examples/pr-review-comprehensive.yml, the variant that posts.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -34,6 +40,23 @@ jobs:
         with:
           fetch-depth: 1
 
+
+      # claude-code-action refuses to run when a PR modifies its own workflow file
+      # ("Workflow validation failed... must have identical content to the version on
+      # the base branch") — but it SKIPS AND REPORTS SUCCESS, so the review check goes
+      # green having reviewed nothing. Detect that here and fail loudly instead.
+      # Observed on azu-docker-db PR #58 (2026-09-01) and azu-quasar PR #1.
+      - name: Guard — workflow must match base branch
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          if ! git diff --quiet FETCH_HEAD -- .github/workflows/claude-code-review.yml; then
+            echo "::error::This PR modifies .github/workflows/claude-code-review.yml. claude-code-action will skip the review and report success. Land the workflow change on $BASE_REF first, or review this PR manually."
+            exit 1
+          fi
+          echo "Workflow file matches $BASE_REF — review will actually run."
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -41,4 +64,20 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # --comment is REQUIRED for the review to be posted at all. The
+          # code-review plugin's command spec says verbatim: "If `--comment`
+          # argument was NOT provided, stop here. Do not post any GitHub
+          # comments." Without it the review is computed, billed, printed to the
+          # job log, and discarded.
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment'
+
+      # Second guard: any future silent-skip path that still reports success will
+      # leave no execution file behind. Treat that as a failed review, not a pass.
+      - name: Assert the review actually ran
+        if: always() && steps.claude-review.outcome == 'success'
+        run: |
+          if [ -z "${{ steps.claude-review.outputs.execution_file }}" ]; then
+            echo "::error::claude-review reported success but produced no execution file — the review did not run."
+            exit 1
+          fi
+          echo "Review produced an execution file."
