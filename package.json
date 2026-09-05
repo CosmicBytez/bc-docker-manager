@@ -22,7 +22,7 @@
     "electron:pack": "npm run build:electron && electron-builder --dir"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.71.2",
+    "@anthropic-ai/sdk": "^0.123.0",
     "date-fns": "^3.6.0",
     "dockerode": "^4.0.2",
     "lucide-react": "^0.562.0",
