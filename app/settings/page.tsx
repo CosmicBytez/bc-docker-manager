@@ -51,30 +51,34 @@ export default function SettingsPage() {
   const [diagnostics, setDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
 
-  const loadSettings = useCallback(async () => {
-    try {
-      // The API key is write-only — the main process reports whether one is
-      // stored but never returns the value, so the input starts empty.
-      const stored = await getAllSettings();
+  // State is only set from promise callbacks, never synchronously, so the
+  // mount effect below doesn't trigger a cascading render
+  // (react-hooks/set-state-in-effect).
+  const loadSettings = useCallback(() =>
+    getAllSettings()
+      .then((stored) => {
+        // The API key is write-only — the main process reports whether one is
+        // stored but never returns the value, so the input starts empty.
+        setSettings((prev) => ({
+          ...prev,
+          anthropicApiKey: '',
+          backupRoot: (stored.backupRoot as string) || 'C:\\BCBackups',
+          autoRefreshInterval: (stored.autoRefreshInterval as number) || 30,
+        }));
+        setApiKeyStored(Boolean(stored.anthropicApiKeySet));
 
-      setSettings((prev) => ({
-        ...prev,
-        anthropicApiKey: '',
-        backupRoot: (stored.backupRoot as string) || 'C:\\BCBackups',
-        autoRefreshInterval: (stored.autoRefreshInterval as number) || 30,
-      }));
-      setApiKeyStored(Boolean(stored.anthropicApiKeySet));
-
-      // Get app info
-      const info = await getAppInfo();
-      if (info) setAppInfo(info);
-    } catch (error) {
-      console.error('Failed to load settings:', error);
-      toast.error('Failed to load settings');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        return getAppInfo();
+      })
+      .then((info) => {
+        if (info) setAppInfo(info);
+      })
+      .catch((error) => {
+        console.error('Failed to load settings:', error);
+        toast.error('Failed to load settings');
+      })
+      .finally(() => {
+        setLoading(false);
+      }), []);
 
   useEffect(() => {
     loadSettings();

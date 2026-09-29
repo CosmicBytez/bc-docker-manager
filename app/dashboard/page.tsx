@@ -8,6 +8,34 @@ import ContainerComparison from '@/components/ContainerComparison';
 import { BCContainer, DashboardStats } from '@/lib/types';
 import { listContainers, containerAction, listBackups, getSetting } from '@/lib/electron-api';
 
+async function loadDashboardData(): Promise<{ containers: BCContainer[]; stats: DashboardStats }> {
+  const containers = await listContainers();
+
+  const running = containers.filter((c: BCContainer) => c.status === 'running').length;
+  const stopped = containers.filter((c: BCContainer) => c.status !== 'running').length;
+  const healthy = containers.filter((c: BCContainer) => c.health === 'healthy').length;
+
+  let backupCount = 0;
+  try {
+    const backups = await listBackups();
+    backupCount = backups.length;
+  } catch {
+    // Ignore backup fetch errors for stats display
+  }
+
+  return {
+    containers,
+    stats: {
+      totalContainers: containers.length,
+      runningContainers: running,
+      stoppedContainers: stopped,
+      totalBackups: backupCount,
+      healthyContainers: healthy,
+      unhealthyContainers: containers.length - healthy,
+    },
+  };
+}
+
 export default function DashboardPage() {
   const [containers, setContainers] = useState<BCContainer[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -34,42 +62,23 @@ export default function DashboardPage() {
     loadRefreshInterval();
   }, []);
 
-  const fetchContainers = useCallback(async () => {
-    try {
-      setError(null);
-      const data = await listContainers();
-
-      setContainers(data);
-      setLastRefreshed(new Date());
-
-      // Calculate stats
-      const running = data.filter((c: BCContainer) => c.status === 'running').length;
-      const stopped = data.filter((c: BCContainer) => c.status !== 'running').length;
-      const healthy = data.filter((c: BCContainer) => c.health === 'healthy').length;
-
-      // Fetch backup count
-      let backupCount = 0;
-      try {
-        const backups = await listBackups();
-        backupCount = backups.length;
-      } catch {
-        // Ignore backup fetch errors for stats display
-      }
-
-      setStats({
-        totalContainers: data.length,
-        runningContainers: running,
-        stoppedContainers: stopped,
-        totalBackups: backupCount,
-        healthyContainers: healthy,
-        unhealthyContainers: data.length - healthy,
-      });
-    } catch {
-      setError('Failed to connect to Docker. Is Docker running?');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // State is only set from promise callbacks, never synchronously, so the
+  // mount/interval effect below doesn't trigger a cascading render
+  // (react-hooks/set-state-in-effect).
+  const fetchContainers = useCallback(() =>
+    loadDashboardData()
+      .then(({ containers: data, stats: nextStats }) => {
+        setContainers(data);
+        setStats(nextStats);
+        setLastRefreshed(new Date());
+        setError(null);
+      })
+      .catch(() => {
+        setError('Failed to connect to Docker. Is Docker running?');
+      })
+      .finally(() => {
+        setLoading(false);
+      }), []);
 
   // Auto-refresh with configurable interval and proper cleanup
   useEffect(() => {

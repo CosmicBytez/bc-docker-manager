@@ -33,26 +33,30 @@ export default function BackupsPage() {
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null);
   const [restoringBackup, setRestoringBackup] = useState<string | null>(null);
 
-  const fetchBackups = useCallback(async () => {
-    try {
-      setError(null);
-      const data = await listBackups();
-      setBackups(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch backups');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // State is only set from promise callbacks, never synchronously, so the
+  // mount effect below doesn't trigger a cascading render
+  // (react-hooks/set-state-in-effect).
+  const fetchBackups = useCallback(() =>
+    listBackups()
+      .then((data) => {
+        setBackups(data);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to fetch backups');
+      })
+      .finally(() => {
+        setLoading(false);
+      }), []);
 
-  const fetchContainers = useCallback(async () => {
-    try {
-      const data = await listContainers();
-      setContainers(data.filter((c: BCContainer) => c.status === 'running'));
-    } catch (err) {
-      console.error('Failed to fetch containers:', err);
-    }
-  }, []);
+  const fetchContainers = useCallback(() =>
+    listContainers()
+      .then((data) => {
+        setContainers(data.filter((c: BCContainer) => c.status === 'running'));
+      })
+      .catch((err) => {
+        console.error('Failed to fetch containers:', err);
+      }), []);
 
   useEffect(() => {
     fetchBackups();
