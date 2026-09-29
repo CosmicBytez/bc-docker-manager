@@ -28,15 +28,20 @@ export default function ContainerCard({ container, onAction, selected, onSelect 
   const [prevStatus, setPrevStatus] = useState(container.status);
   const [statusAnimating, setStatusAnimating] = useState(false);
 
-  // Detect status changes and trigger animation
+  // Detect status changes during render rather than in an effect, so the
+  // animation starts in the same render
+  // (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+  if (container.status !== prevStatus) {
+    setPrevStatus(container.status);
+    setStatusAnimating(true);
+  }
+
+  // End the animation 1s after the latest status change
   useEffect(() => {
-    if (container.status !== prevStatus) {
-      setStatusAnimating(true);
-      setPrevStatus(container.status);
-      const timer = setTimeout(() => setStatusAnimating(false), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [container.status, prevStatus]);
+    if (!statusAnimating) return;
+    const timer = setTimeout(() => setStatusAnimating(false), 1000);
+    return () => clearTimeout(timer);
+  }, [statusAnimating, prevStatus]);
 
   const handleAction = async (action: 'start' | 'stop' | 'restart' | 'remove') => {
     setLoading(action);

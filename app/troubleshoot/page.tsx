@@ -46,20 +46,24 @@ export default function TroubleshootPage() {
     },
   ];
 
-  const fetchContainers = useCallback(async () => {
-    try {
-      const data = await listContainers();
-      setContainers(data);
-      // Auto-select if only one container
-      if (data.length === 1) {
-        setSelectedContainer(data[0].name);
-      }
-    } catch (err) {
-      console.error('Failed to fetch containers:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // State is only set from promise callbacks, never synchronously, so the
+  // mount effect below doesn't trigger a cascading render
+  // (react-hooks/set-state-in-effect).
+  const fetchContainers = useCallback(() =>
+    listContainers()
+      .then((data) => {
+        setContainers(data);
+        // Auto-select if only one container
+        if (data.length === 1) {
+          setSelectedContainer(data[0].name);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch containers:', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      }), []);
 
   useEffect(() => {
     fetchContainers();

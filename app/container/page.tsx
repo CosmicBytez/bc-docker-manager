@@ -28,6 +28,10 @@ import {
   openExternal,
 } from '@/lib/electron-api';
 
+function findContainer(containers: BCContainer[], id: string): BCContainer | null {
+  return containers.find((c) => c.id === id || c.id.startsWith(id)) ?? null;
+}
+
 function ContainerDetailContent() {
   const searchParams = useSearchParams();
   const containerId = searchParams.get('id');
@@ -35,36 +39,21 @@ function ContainerDetailContent() {
   const [container, setContainer] = useState<BCContainer | null>(null);
   const [stats, setStats] = useState<ContainerStats | null>(null);
   const [logs, setLogs] = useState<ContainerLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [logsLoading, setLogsLoading] = useState(false);
+  // Nothing to load without an id, so start out loading only when there is one
+  // (setting it false from the effect would be a cascading render).
+  const [loading, setLoading] = useState(containerId !== null);
+  const [logsLoading, setLogsLoading] = useState(containerId !== null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchContainer = async () => {
-    if (!containerId) {
-      setLoading(false);
-      return;
-    }
+    if (!containerId) return;
 
     try {
       // Use electron-api functions instead of direct fetch
       const containers = await listContainers();
-      const found = containers.find((c: BCContainer) => c.id === containerId || c.id.startsWith(containerId));
-      setContainer(found || null);
+      setContainer(findContainer(containers, containerId));
     } catch (err) {
       console.error('Failed to fetch container:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchStats = async () => {
-    if (!containerId || !container || container.status !== 'running') return;
-
-    try {
-      const containerStats = await getContainerStats(containerId);
-      setStats(containerStats);
-    } catch (err) {
-      console.error('Failed to fetch stats:', err);
     }
   };
 
@@ -83,22 +72,56 @@ function ContainerDetailContent() {
     }
   };
 
+  // Load the container and its logs whenever the id changes. State is set only
+  // from promise callbacks, and `ignore` drops responses for a stale id.
   useEffect(() => {
-    fetchContainer();
-    fetchLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!containerId) return;
+    let ignore = false;
+
+    listContainers()
+      .then((containers) => {
+        if (!ignore) setContainer(findContainer(containers, containerId));
+      })
+      .catch((err) => console.error('Failed to fetch container:', err))
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    getContainerLogs(containerId, { tail: 200 })
+      .then((logsData) => {
+        if (!ignore) setLogs(logsData);
+      })
+      .catch((err) => console.error('Failed to fetch logs:', err))
+      .finally(() => {
+        if (!ignore) setLogsLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, [containerId]);
 
-  // Fetch stats when container is loaded and running
+  // Poll stats every 10 seconds while the container is running
+  const isRunning = container?.status === 'running';
   useEffect(() => {
-    if (container?.status === 'running') {
-      fetchStats();
-      // Refresh stats every 10 seconds
-      const interval = setInterval(fetchStats, 10000);
-      return () => clearInterval(interval);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [container?.id, container?.status]);
+    if (!containerId || !isRunning) return;
+    let ignore = false;
+
+    const pollStats = () => {
+      getContainerStats(containerId)
+        .then((containerStats) => {
+          if (!ignore) setStats(containerStats);
+        })
+        .catch((err) => console.error('Failed to fetch stats:', err));
+    };
+
+    pollStats();
+    const interval = setInterval(pollStats, 10000);
+    return () => {
+      ignore = true;
+      clearInterval(interval);
+    };
+  }, [containerId, isRunning]);
 
   const handleAction = async (action: 'start' | 'stop' | 'restart') => {
     if (!containerId) return;

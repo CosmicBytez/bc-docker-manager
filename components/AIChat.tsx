@@ -145,24 +145,11 @@ function getOfflineResponse(query: string): string {
 Try asking about one of these topics, or add your Anthropic API key in **Settings** for full AI-powered assistance.`;
 }
 
-export default function AIChat({ initialContext, initialPrompt }: AIChatProps) {
-  const [messages, setMessages] = useState<AIMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const hasProcessedInitialPrompt = useRef(false);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Add welcome message on mount
-  useEffect(() => {
-    if (messages.length === 0) {
-      setMessages([{
-        id: 'welcome',
-        role: 'assistant',
-        content: `Hello! I'm your BC Docker troubleshooting assistant. I can help you with:
+function welcomeMessage(initialContext?: string): AIMessage {
+  return {
+    id: 'welcome',
+    role: 'assistant',
+    content: `Hello! I'm your BC Docker troubleshooting assistant. I can help you with:
 
 - **Container issues**: startup failures, crashes, performance problems
 - **Configuration**: ports, memory, networking, SSL
@@ -172,10 +159,21 @@ export default function AIChat({ initialContext, initialPrompt }: AIChatProps) {
 ${initialContext ? `\nI see you're working with: ${initialContext}` : ''}
 
 How can I help you today?`,
-        timestamp: new Date().toISOString(),
-      }]);
-    }
-  }, [initialContext, messages.length]);
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export default function AIChat({ initialContext, initialPrompt }: AIChatProps) {
+  // Seed the welcome message as initial state (captures initialContext at mount)
+  const [messages, setMessages] = useState<AIMessage[]>(() => [welcomeMessage(initialContext)]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const hasProcessedInitialPrompt = useRef(false);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // Handle initial prompt from quick actions
   useEffect(() => {
