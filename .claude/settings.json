@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'INPUT=\"$CLAUDE_TOOL_INPUT\"; if echo \"$INPUT\" | grep -qiE \"\\.env(\\.[a-zA-Z_]+)*$\" ; then echo \"BLOCK: Do not edit .env files directly. Use environment-specific tooling or ask the user first.\" && exit 1; fi; if echo \"$INPUT\" | grep -qiE \"(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|bun\\.lockb)\" ; then echo \"BLOCK: Do not edit lock files directly. Run the package manager install command instead.\" && exit 1; fi; exit 0'"
+            "command": "bash -c 'FILE=$(jq -r \".tool_input.file_path // .file_path // empty\" 2>/dev/null); if [ -z \"$FILE\" ]; then exit 0; fi; BASE=\"${FILE##*/}\"; if echo \"$BASE\" | grep -qiE \"^\\.env(\\.[a-zA-Z_]+)*$\" && ! echo \"$BASE\" | grep -qiE \"\\.(example|sample|template)$\" ; then echo \"BLOCK: Do not edit .env files directly. Use environment-specific tooling or ask the user first.\" >&2; exit 2; fi; if echo \"$BASE\" | grep -qiE \"^(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|bun\\.lockb)$\" ; then echo \"BLOCK: Do not edit lock files directly. Run the package manager install command instead.\" >&2; exit 2; fi; exit 0'"
           }
         ]
       }
