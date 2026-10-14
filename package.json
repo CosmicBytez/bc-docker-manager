@@ -25,7 +25,7 @@
     "@anthropic-ai/sdk": "^0.133.0",
     "date-fns": "^3.6.0",
     "dockerode": "^4.0.2",
-    "lucide-react": "^0.562.0",
+    "lucide-react": "^0.577.0",
     "next": "^16.3.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
