@@ -37,7 +37,7 @@ jobs:
           echo '```' >> audit-report.md
       - name: Create issue if findings
         if: failure()
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@v6
         with:
           title: '🔒 Weekly Security Scan — findings detected'
           content-filepath: audit-report.md
