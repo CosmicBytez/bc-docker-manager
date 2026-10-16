@@ -2,5 +2,15 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "github>CosmicBytez/renovate"
+  ],
+  "packageRules": [
+    {
+      "description": "claude-code-review.yml's no-op fix (2026-10-15, azu-trading-bot PR #32) depends on claude-code-action internals at this exact SHA. Moving the pin is a deliberate re-audit: approve it on the Dependency Dashboard, never automerge.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["anthropics/claude-code-action"],
+      "matchFileNames": [".github/workflows/claude-code-review.yml"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    }
   ]
 }
