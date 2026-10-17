@@ -20,10 +20,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: '20'
         cache: 'npm'
@@ -115,7 +115,7 @@ jobs:
         }
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
         name: BC Container Manager ${{ steps.version.outputs.VERSION }}
