@@ -1,12 +1,15 @@
 name: Claude Code Review
 
+# Port of CosmicBytez/azu-trading-bot #33. The canonical copy of this workflow,
+# .github/scripts/claude_review_check.py and their tests live in that repo
+# (.github/scripts + tests/ci); the script here is byte-identical. Fix there first.
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
 # `synchronize` fires on every push to the PR. Without this, three quick pushes
-# queue three full reviews on the single self-hosted runner, and the first two
-# are reviewing code that no longer exists.
+# start three full (billed) reviews, and the first two are reviewing code that
+# no longer exists.
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -15,12 +18,17 @@ jobs:
   claude-review:
     # Draft PRs still fire `opened` — wait for ready_for_review. Dependency PRs
     # (Renovate branches, Dependabot) are policy-merged, not review-merged.
-    # Same-repo guard: never run fork-origin PR code on the self-hosted runner.
+    # Same-repo guard: this repo is PUBLIC, so never run fork-origin PR code in a
+    # job that holds secrets and id-token: write.
     if: |
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !startsWith(github.event.pull_request.head.ref, 'renovate/') &&
       github.event.pull_request.user.login != 'dependabot[bot]'
+    # GitHub-hosted ON PURPOSE (PR #53): this is the org's only public repo and the
+    # Default runner group does not serve public repos, so self-hosted jobs were
+    # never dispatched (548 runs, 213 cancelled at the 24 h queue expiry). Opening
+    # the group to public repos is ruled out: fork PRs would be root on azu-docker01.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,13 +48,16 @@ jobs:
         with:
           fetch-depth: 1
 
-
       # claude-code-action refuses to run when a PR modifies its own workflow file
       # ("Workflow validation failed... must have identical content to the version on
       # the base branch") — but it SKIPS AND REPORTS SUCCESS, so the review check goes
       # green having reviewed nothing. Detect that here and fail loudly instead.
       # Observed on azu-docker-db PR #58 (2026-09-01) and azu-quasar PR #1.
+      # It also records the base branch's guard script: diag and guard run that blob,
+      # never the PR checkout's copy, so a PR cannot rewrite the check that certifies
+      # its own review in a job holding id-token: write. Guard changes land on base first.
       - name: Guard — workflow must match base branch
+        id: base
         run: |
           git fetch --no-tags --depth=1 origin "$BASE_REF"
           if ! git diff --quiet FETCH_HEAD -- .github/workflows/claude-code-review.yml; then
@@ -54,16 +65,78 @@ jobs:
             exit 1
           fi
           echo "Workflow file matches $BASE_REF — review will actually run."
+          blob=$(git rev-parse --verify --quiet "FETCH_HEAD:.github/scripts/claude_review_check.py") || {
+            echo "::error::$BASE_REF has no .github/scripts/claude_review_check.py, so the review cannot be verified. Land it on $BASE_REF first."
+            exit 1
+          }
+          echo "script_blob=$blob" >> "$GITHUB_OUTPUT"
         env:
           BASE_REF: ${{ github.base_ref }}
 
+      # Fail before the paid step if a runner image change drops a tool: the guard
+      # below needs python3 (ubuntu-latest ships it; the script stays 3.8-safe for the
+      # fleet's self-hosted runner) and gh, and the plugin itself posts through gh.
+      # started_at marks which claude[bot] artefacts are this run's. The action's
+      # "Post buffered inline comments" step replays /tmp/inline-comments-buffer.jsonl
+      # and its failure path re-exports $RUNNER_TEMP/claude-execution-output.json if it
+      # exists. Hosted VMs are fresh per job, so the clears below are cheap insurance
+      # kept identical to the canonical copy (on a persistent runner /tmp outlives jobs
+      # and a stale buffer would be posted on this PR): any execution file is this run's.
+      - name: Preflight — tools, start marker, clear stale buffer and execution file
+        id: preflight
+        run: |
+          for tool in python3 gh; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is not installed on this runner; the review cannot be verified. Add it to the runner image."
+              exit 1
+            fi
+          done
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          rm -f /tmp/inline-comments-buffer.jsonl
+          rm -f "$RUNNER_TEMP/claude-execution-output.json"
+
+      # ROOT CAUSE of the 2026-10-15 silent no-op (azu-trading-bot PR #32, job
+      # 116615173858: green, 4 turns, 14 s, $0.0876, nothing posted; same signature
+      # here on PR #55, run 36515668722). The action drives CLI 2.1.300 through
+      # the Agent SDK and stops at the FIRST result message
+      # (base-action/src/run-claude-sdk.ts `break`), then kills the CLI. Agent-tool
+      # subagents run in the background by default, so that first result was "the
+      # review agent is still running" and the plugin never posted.
+      # CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 forces every subagent into the
+      # foreground, even when the model asks for background (reproduced and fixed
+      # locally on these exact versions); CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS has no
+      # effect on this path. It is set twice: the step env reaches the CLI through the
+      # action's process env, and --settings is a per-run CLI flag. Never the action's
+      # `settings` input: that merges into ~/.claude/settings.json, which on the
+      # fleet's persistent self-hosted runner leaks into other repos' jobs.
+      #
+      # --allowedTools is required too: in agent mode the action installs the
+      # github_inline_comment MCP server only when claude_args names its tool
+      # (src/mcp/install-mcp-server.ts). It only ADDS permission allow rules (the CLI's
+      # cliArg rules); narrowing is the separate --tools flag, which the action never
+      # sets, so Agent/Task stay available (azu-trading-bot PR #32 launched Agent with
+      # no claude_args at all). Keep the list one double-quoted token: the agent-mode
+      # and SDK parsers (src/modes/agent/parse-tools.ts,
+      # base-action/src/parse-sdk-options.ts) then agree on it. No `#` lines in
+      # claude_args: the action deletes them.
+      #
+      # Pinned because the fix depends on those internals. Re-check them before
+      # moving the pin; renovate.json holds bumps behind the Dependency Dashboard.
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1
+        # Foreground subagents hold the runner for the whole review. Cap it below the
+        # 6 h job default so a hung subagent cannot hold a runner for hours.
+        timeout-minutes: 30
+        uses: anthropics/claude-code-action@a26b07d8c778b0c43f64618e5fd29fd0f8af72e8 # v1.0.250
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
+          claude_args: |
+            --settings '{"env":{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"}}'
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
           # --comment is REQUIRED for the review to be posted at all. The
           # code-review plugin's command spec says verbatim: "If `--comment`
           # argument was NOT provided, stop here. Do not post any GitHub
@@ -71,13 +144,53 @@ jobs:
           # job log, and discarded.
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment'
 
-      # Second guard: any future silent-skip path that still reports success will
-      # leave no execution file behind. Treat that as a failed review, not a pass.
-      - name: Assert the review actually ran
-        if: always() && steps.claude-review.outcome == 'success'
+      - name: Clear inline-comment buffer
+        if: always()
+        run: rm -f /tmp/inline-comments-buffer.jsonl
+
+      # The action's own log shows only subtype/is_error/num_turns/cost, the summary
+      # that looked healthy on azu-trading-bot PR #32 and on PR #55 here
+      # (show_full_output stays off: it would publish the diff and every tool
+      # payload). This adds models, Agent/Task calls, background launches and
+      # Claude's redacted final message. Never fails the job.
+      # diag and guard run the base branch's script blob (see `base`). -I keeps the PR
+      # checkout off sys.path (a PR json.py would shadow the stdlib); pipefail because
+      # the default `bash -e` would let an unreadable blob feed python3 an empty
+      # program that exits 0.
+      - name: Review diagnostics
+        if: always() && steps.claude-review.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          SCRIPT_BLOB: ${{ steps.base.outputs.script_blob }}
+          EXEC_FILE: ${{ steps.claude-review.outputs.execution_file }}
         run: |
-          if [ -z "${{ steps.claude-review.outputs.execution_file }}" ]; then
-            echo "::error::claude-review reported success but produced no execution file — the review did not run."
-            exit 1
-          fi
-          echo "Review produced an execution file."
+          set -o pipefail
+          git cat-file blob "$SCRIPT_BLOB" | python3 -I - diag
+
+      # Replaces "Assert the review actually ran", which only checked that an
+      # execution file existed; azu-trading-bot PR #32's no-op and PR #55's here both
+      # passed it. Fails on any background launch, even if something was posted:
+      # findings computed while the bug agents were still running would be a false
+      # all-clear. Otherwise passes only if claude[bot] posted a review-shaped artefact
+      # (a "## Code review" comment, a PR review or an inline comment) since the start
+      # marker minus 60 s of clock skew. A claude.yml tag-mode reply is not a review.
+      # With nothing new, it passes only for the plugin's step-1 stops: PR closed,
+      # merged or draft; an earlier review
+      # that `gh pr view --comments` shows, unless this session went past step 1
+      # (inline-only reviews are hidden there, so those PRs are re-reviewed on every
+      # push and never count); or, with a warning, a clean step-1 session that judged
+      # the PR trivial. An unreadable execution file, the old silent-skip signature,
+      # is rescued only by a fresh review. Decision order: _run_guard in
+      # .github/scripts/claude_review_check.py.
+      - name: Guard — assert the review was posted
+        if: ${{ !cancelled() && steps.claude-review.outcome == 'success' }}
+        env:
+          SCRIPT_BLOB: ${{ steps.base.outputs.script_blob }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          STARTED_AT: ${{ steps.preflight.outputs.started_at }}
+          EXEC_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          set -o pipefail
+          git cat-file blob "$SCRIPT_BLOB" | python3 -I - guard
