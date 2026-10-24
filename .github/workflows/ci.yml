@@ -9,7 +9,7 @@ on:
 
 jobs:
   node:
-    uses: CosmicBytez/.github/.github/workflows/ci-node.yml@v1
+    uses: CosmicBytez/.github/.github/workflows/ci-node.yml@b5912f9252f2e16c1e9cfecda84a8d898355ac4c # v1
     with:
       node-version: "22"
       runs-on: ubuntu-latest
