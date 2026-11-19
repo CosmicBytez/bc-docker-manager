@@ -40,6 +40,15 @@ jobs:
       # own examples/pr-review-comprehensive.yml, the variant that posts.
       pull-requests: write
       issues: read
+      # checks + statuses + actions READ: the review plugin's step-1 "already
+      # commented?" check runs `gh pr view --comments`, whose default field set
+      # includes statusCheckRollup (contexts -> checkSuite.workflowRun). Missing any
+      # of the three it fails "Resource not accessible by integration" and the
+      # reviewer may stop without posting (azu-quasar PR #29, 2026-11-19; field-by-
+      # field probe in azu-quasar PR #30 proved all three are needed). Read-only.
+      checks: read
+      statuses: read
+      actions: read
       id-token: write
 
     steps:
