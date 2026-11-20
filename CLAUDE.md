@@ -253,7 +253,7 @@ App settings (stored in `settings.json`, not env):
 
 ## CI/CD
 
-GitHub Actions (7 workflows in `.github/workflows/`):
+GitHub Actions (7 workflows in `.github/workflows/`). **Every job runs on GitHub-hosted runners (`ubuntu-latest` / `windows-latest`), NOT the org self-hosted runner** — the deliberate exception to the fleet's self-hosted-only rule. Reason: this is the org's PUBLIC repo (verified via the GitHub API 2026-11-20), and the org's Default runner group does not serve public repos, so `self-hosted` jobs were never dispatched and expired after 24h (fixed 2026-09-04, PR #53 → `3d64698`). Do not switch jobs back to `self-hosted`, and do not "fix" it by enabling public-repo access on the runner group (that would let public-PR code onto the shared runner). Detail: memory `bcdm-runner-group-blocks-public-repo`. `ci.yml` keeps `cache: npm` because hosted runners do not persist `~/.npm` (the no-`cache: npm` rule applies to self-hosted repos only).
 - `build-test.yml` — Windows runner, Node 22, type-check, tests, electron:pack
 - `ci.yml` — Lint and build checks
 - `release.yml` — Release automation
